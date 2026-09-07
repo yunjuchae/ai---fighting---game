@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Fighting Game - Round 1</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        background: #111;
+        color: white;
+        font-family: Arial, sans-serif;
+        overflow: hidden;
+        user-select: none;
+    }
+
+    #game {
+        display: block;
+        margin: auto;
+        background: linear-gradient(#222, #111);
+    }
+
+    #info {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(900px, 95%);
+        display: flex;
+        justify-content: space-between;
+        pointer-events: none;
+    }
+
+    .playerInfo {
+        width: 40%;
+    }
+
+    .name {
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+
+    .bar {
+        height: 22px;
+        background: #333;
+        border: 2px solid white;
+        margin-bottom: 6px;
+    }
+
+    .fill {
+        height: 100%;
+        width: 100%;
+        transition: width 0.1s;
+    }
+
+    #playerHp {
+        background: #e53935;
+    }
+
+    #aiHp {
+        background: #e53935;
+    }
+
+    #playerStamina {
+        background: #2196f3;
+    }
+
+    #aiStamina {
+        background: #2196f3;
+    }
+
+    #roundText {
+        position: fixed;
+        top: 115px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 28px;
+        font-weight: bold;
+    }
+
+    #controls {
+        position: fixed;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        text-align: center;
+        color: #ccc;
+        font-size: 15px;
+    }
+
+    #result {
+        display: none;
+        position: fixed;
+        inset: 0;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        background: rgba(0,0,0,0.75);
+    }
+
+    #result h1 {
+        font-size: 60px;
+        margin: 10px;
+    }
+
+    #restart {
+        font-size: 20px;
+        padding: 12px 30px;
+        cursor: pointer;
+        border: none;
+        border-radius: 8px;
+    }
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="info">
+
+    <div class="playerInfo">
+        <div class="name">PLAYER</div>
+
+        <div class="bar">
+            <div id="playerHp" class="fill"></div>
+        </div>
+
+        <div class="bar">
+            <div id="playerStamina" class="fill"></div>
+        </div>
+    </div>
+
+    <div class="playerInfo" style="text-align:right;">
+        <div class="name">AI BOT</div>
+
+        <div class="bar">
+            <div id="aiHp" class="fill"></div>
+        </div>
+
+        <div class="bar">
+            <div id="aiStamina" class="fill"></div>
+        </div>
+    </div>
+
+</div>
+
+<div id="roundText">ROUND 1</div>
+
+<div id="controls">
+    ← → 이동　 |　 Z 주먹　 |　 X 킥　 |　 C 막기
+</div>
+
+<div id="result">
+    <h1 id="resultText">YOU WIN!</h1>
+    <button id="restart">다시하기</button>
+</div>
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+    canvas.width = Math.min(window.innerWidth, 1000);
+    canvas.height = window.innerHeight;
+}
+
+resize();
+window.addEventListener("resize", resize);
+
+
+// ============================
+// 기본 설정
+// ============================
+
+const GROUND = 0.78;
+
+const PLAYER_MAX_HP = 100;
+const AI_MAX_HP = 100;
+
+const MAX_STAMINA = 100;
+
+
+// ============================
+// 플레이어
+// ============================
+
+let player = {
+    x: 250,
+    y: 0,
+
+    width: 50,
+    height: 100,
+
+    hp: 100,
+    stamina: 100,
+
+    speed: 5,
+
+    blocking: false,
+    attacking: false,
+
+    attackType: null,
+    attackTimer: 0,
+
+    hitCooldown: 0,
+
+    facing: 1
+};
+
+
+// ============================
+// AI
+// ============================
+
+let ai = {
+    x: 700,
+    y: 0,
+
+    width: 50,
+    height: 100,
+
+    hp: 100,
+    stamina: 100,
+
+    speed: 2.2,
+
+    blocking: false,
+    attacking: false,
+
+    attackType: null,
+    attackTimer: 0,
+
+    hitCooldown: 0,
+
+    facing: -1,
+
+    decisionTimer: 0
+};
+
+
+// ============================
+// 게임 상태
+// ============================
+
+let gameOver = false;
+
+let keys = {};
+
+let lastStaminaUsePlayer = 0;
+let lastStaminaUseAI = 0;
+
+
+// ============================
+// 키보드
+// ============================
+
+document.addEventListener("keydown", function(e) {
+
+    keys[e.key.toLowerCase()] = true;
+
+    // 페이지 스크롤 방지
+    if (
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key.toLowerCase() === "z" ||
+        e.key.toLowerCase() === "x" ||
+        e.key.toLowerCase() === "c"
+    ) {
+        e.preventDefault();
+    }
+
+    if (gameOver) return;
+
+    // Z = 펀치
+    if (e.key.toLowerCase() === "z") {
+        playerAttack("punch");
+    }
+
+    // X = 킥
+    if (e.key.toLowerCase() === "x") {
+        playerAttack("kick");
+    }
+
+});
+
+document.addEventListener("keyup", function(e) {
+    keys[e.key.toLowerCase()] = false;
+});
+
+
+// ============================
+// 공격 설정
+// ============================
+
+const attacks = {
+
+    punch: {
+        damage: 5,
+        stamina: 10,
+        knockback: 10,
+        range: 75,
+        duration: 350
+    },
+
+    kick: {
+        damage: 5,
+        stamina: 18,
+        knockback: 28,
+        range: 90,
+        duration: 500
+    }
+
+};
+
+
+// ============================
+// 플레이어 공격
+// ============================
+
+function playerAttack(type) {
+
+    if (gameOver) return;
+
+    if (player.attacking) return;
+
+    let attack = attacks[type];
+
+    if (player.stamina < attack.stamina) return;
+
+    player.stamina -= attack.stamina;
+    lastStaminaUsePlayer = Date.now();
+
+    player.attacking = true;
+    player.attackType = type;
+    player.attackTimer = attack.duration;
+
+}
+
+
+// ============================
+// AI 공격
+// ============================
+
+function aiAttack(type) {
+
+    if (ai.attacking) return;
+
+    let attack = attacks[type];
+
+    if (ai.stamina < attack.stamina) return;
+
+    ai.stamina -= attack.stamina;
+    lastStaminaUseAI = Date.now();
+
+    ai.attacking = true;
+    ai.attackType = type;
+    ai.attackTimer = attack.duration;
+}
+
+
+// ============================
+// 거리 계산
+// ============================
+
+function distanceBetween(a, b) {
+
+    return Math.abs(
+        (a.x + a.width / 2) -
+        (b.x + b.width / 2)
+    );
+
+}
+
+
+// ============================
+// 공격 판정
+// ============================
+
+function checkAttack(attacker, target) {
+
+    if (!attacker.attacking) return;
+
+    if (attacker.hitCooldown > 0) return;
+
+    let attack = attacks[attacker.attackType];
+
+    let distance = distanceBetween(attacker, target);
+
+    if (distance <= attack.range) {
+
+        attacker.hitCooldown = 300;
+
+        // 막기
+        if (target.blocking) {
+
+            // 데미지에 비례해서 스테미나 감소
+            target.stamina -= attack.damage;
+
+            if (target.stamina < 0) {
+                target.stamina = 0;
+            }
+
+            if (target === player) {
+                lastStaminaUsePlayer = Date.now();
+            } else {
+                lastStaminaUseAI = Date.now();
+            }
+
+            // 막았으므로 HP 데미지는 없음
+
+        } else {
+
+            // 실제 데미지
+            target.hp -= attack.damage;
+
+            // 넉백
+            if (attacker.x < target.x) {
+                target.x += attack.knockback;
+            } else {
+                target.x -= attack.knockback;
+            }
+
+            if (target.hp < 0) {
+                target.hp = 0;
+            }
+
+            // 사망
+            if (target.hp <= 0) {
+                endGame(target);
+            }
+        }
+    }
+}
+
+
+// ============================
+// 게임 종료
+// ============================
+
+function endGame(deadCharacter) {
+
+    gameOver = true;
+
+    document.getElementById("result").style.display = "flex";
+
+    if (deadCharacter === ai) {
+        document.getElementById("resultText").textContent = "YOU WIN!";
+    } else {
+        document.getElementById("resultText").textContent = "YOU LOSE!";
+    }
+}
+
+
+// ============================
+// 스테미나 회복
+// ============================
+
+function recoverStamina(character, lastUse) {
+
+    if (character.stamina >= MAX_STAMINA) {
+        character.stamina = MAX_STAMINA;
+        return;
+    }
+
+    let timeSinceUse = Date.now() - lastUse;
+
+    // 2초 전에는 매우 느린 회복
+    if (timeSinceUse < 2000) {
+
+        character.stamina += 0.025;
+
+    } else {
+
+        // 2초가 지나면 빠른 회복
+        character.stamina += 0.25;
+
+    }
+
+    if (character.stamina > MAX_STAMINA) {
+        character.stamina = MAX_STAMINA;
+    }
+}
+
+
+// ============================
+// 플레이어 업데이트
+// ============================
+
+function updatePlayer() {
+
+    if (gameOver) return;
+
+    // 이동
+    if (keys["arrowleft"]) {
+
+        player.x -= player.speed;
+        player.facing = -1;
+
+    }
+
+    if (keys["arrowright"]) {
+
+        player.x += player.speed;
+        player.facing = 1;
+
+    }
+
+    // 막기
+    player.blocking = keys["c"] && !player.attacking && player.stamina > 0;
+
+    // 공격 타이머
+    if (player.attacking) {
+
+        player.attackTimer -= 16;
+
+        if (player.attackTimer <= 0) {
+
+            player.attacking = false;
+            player.attackType = null;
+
+        }
+    }
+
+    if (player.hitCooldown > 0) {
+        player.hitCooldown -= 16;
+    }
+
+    // 공격 판정
+    checkAttack(player, ai);
+
+    // 스테미나 회복
+    recoverStamina(player, lastStaminaUsePlayer);
+
+    // 화면 밖 방지
+    player.x = Math.max(
+        30,
+        Math.min(canvas.width - player.width - 30, player.x)
+    );
+}
+
+
+// ============================
+// AI 업데이트
+// ============================
+
+function updateAI() {
+
+    if (gameOver) return;
+
+    let distance = distanceBetween(ai, player);
+
+    ai.decisionTimer -= 16;
+
+    // 플레이어 방향 보기
+    if (player.x < ai.x) {
+        ai.facing = -1;
+    } else {
+        ai.facing = 1;
+    }
+
+    // 공격 중
+    if (ai.attacking) {
+
+        ai.attackTimer -= 16;
+
+        if (ai.attackTimer <= 0) {
+
+            ai.attacking = false;
+            ai.attackType = null;
+
+        }
+
+    } else {
+
+        // 플레이어에게 접근
+        if (distance > 85) {
+
+            if (player.x < ai.x) {
+                ai.x -= ai.speed;
+            } else {
+                ai.x += ai.speed;
+            }
+
+            ai.blocking = false;
+
+        } else {
+
+            // 가까워졌으면 행동 결정
+            if (ai.decisionTimer <= 0) {
+
+                ai.decisionTimer = 400 + Math.random() * 700;
+
+                let random = Math.random();
+
+                // 스테미나가 낮으면 방어
+                if (ai.stamina < 25) {
+
+                    ai.blocking = true;
+
+                }
+
+                // 공격
+                else if (random < 0.55) {
+
+                    ai.blocking = false;
+
+                    if (Math.random() < 0.65) {
+                        aiAttack("punch");
+                    } else {
+                        aiAttack("kick");
+                    }
+
+                }
+
+                // 방어
+                else if (random < 0.75) {
+
+                    ai.blocking = true;
+
+                }
+
+                else {
+
+                    ai.blocking = false;
+
+                }
+            }
+        }
+    }
+
+    // 막기
+    if (
+        ai.blocking &&
+        ai.stamina <= 0
+    ) {
+        ai.blocking = false;
+    }
+
+    if (ai.hitCooldown > 0) {
+        ai.hitCooldown -= 16;
+    }
+
+    // 공격 판정
+    checkAttack(ai, player);
+
+    // 스테미나 회복
+    recoverStamina(ai, lastStaminaUseAI);
+
+    // 화면 밖 방지
+    ai.x = Math.max(
+        30,
+        Math.min(canvas.width - ai.width - 30, ai.x)
+    );
+}
+
+
+// ============================
+// 캐릭터 그리기
+// ============================
+
+function drawCharacter(character, isPlayer) {
+
+    let groundY = canvas.height * GROUND;
+
+    let x = character.x;
+    let y = groundY - character.height;
+
+    // 그림자
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.beginPath();
+    ctx.ellipse(
+        x + character.width / 2,
+        groundY + 5,
+        35,
+        8,
+        0,
+        0,
+        Math.PI * 2
+    );
+    ctx.fill();
+
+    // 몸
+    if (isPlayer) {
+        ctx.fillStyle = "#4fc3f7";
+    } else {
+        ctx.fillStyle = "#ef5350";
+    }
+
+    ctx.fillRect(
+        x,
+        y + 25,
+        character.width,
+        55
+    );
+
+    // 머리
+    ctx.beginPath();
+    ctx.arc(
+        x + character.width / 2,
+        y + 5,
+        25,
+        0,
+        Math.PI * 2
+    );
+    ctx.fill();
+
+    // 다리
+    ctx.fillRect(
+        x + 5,
+        y + 78,
+        15,
+        25
+    );
+
+    ctx.fillRect(
+        x + 30,
+        y + 78,
+        15,
+        25
+    );
+
+    // 눈
+    ctx.fillStyle = "white";
+
+    ctx.fillRect(
+        x + 12,
+        y,
+        7,
+        7
+    );
+
+    ctx.fillRect(
+        x + 31,
+        y,
+        7,
+        7
+    );
+
+    // 막기 표시
+    if (character.blocking) {
+
+        ctx.strokeStyle = "#ffd740";
+        ctx.lineWidth = 5;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            x + character.width / 2,
+            y + 40,
+            45,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.stroke();
+    }
+
+    // 공격 표시
+    if (character.attacking) {
+
+        let attack = attacks[character.attackType];
+
+        ctx.fillStyle = "#fff";
+
+        if (character.facing === 1) {
+
+            ctx.fillRect(
+                x + character.width,
+                y + 35,
+                attack.range - 35,
+                12
+            );
+
+        } else {
+
+            ctx.fillRect(
+                x - attack.range + 35,
+                y + 35,
+                attack.range - 35,
+                12
+            );
+
+        }
+    }
+}
+
+
+// ============================
+// 바닥
+// ============================
+
+function drawGround() {
+
+    let groundY = canvas.height * GROUND;
+
+    ctx.fillStyle = "#292929";
+
+    ctx.fillRect(
+        0,
+        groundY,
+        canvas.width,
+        canvas.height - groundY
+    );
+
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        0,
+        groundY
+    );
+
+    ctx.lineTo(
+        canvas.width,
+        groundY
+    );
+
+    ctx.stroke();
+}
+
+
+// ============================
+// UI 업데이트
+// ============================
+
+function updateUI() {
+
+    document.getElementById("playerHp").style.width =
+        player.hp + "%";
+
+    document.getElementById("aiHp").style.width =
+        ai.hp + "%";
+
+    document.getElementById("playerStamina").style.width =
+        player.stamina + "%";
+
+    document.getElementById("aiStamina").style.width =
+        ai.stamina + "%";
+}
+
+
+// ============================
+// 게임 그리기
+// ============================
+
+function draw() {
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    // 배경
+    let gradient = ctx.createLinearGradient(
+        0,
+        0,
+        0,
+        canvas.height
+    );
+
+    gradient.addColorStop(0, "#252525");
+    gradient.addColorStop(1, "#101010");
+
+    ctx.fillStyle = gradient;
+
+    ctx.fillRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    drawGround();
+
+    drawCharacter(player, true);
+    drawCharacter(ai, false);
+
+}
+
+
+// ============================
+// 게임 루프
+// ============================
+
+function gameLoop() {
+
+    updatePlayer();
+    updateAI();
+
+    updateUI();
+
+    draw();
+
+    requestAnimationFrame(gameLoop);
+}
+
+
+// ============================
+// 다시하기
+// ============================
+
+document.getElementById("restart").addEventListener("click", function() {
+
+    player.x = 250;
+    player.hp = 100;
+    player.stamina = 100;
+    player.attacking = false;
+    player.blocking = false;
+
+    ai.x = 700;
+    ai.hp = 100;
+    ai.stamina = 100;
+    ai.attacking = false;
+    ai.blocking = false;
+
+    lastStaminaUsePlayer = Date.now();
+    lastStaminaUseAI = Date.now();
+
+    gameOver = false;
+
+    document.getElementById("result").style.display = "none";
+
+});
+
+
+lastStaminaUsePlayer = Date.now();
+lastStaminaUseAI = Date.now();
+
+gameLoop();
+
+</script>
+
+</body>
+</html>
